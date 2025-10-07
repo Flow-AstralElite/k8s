@@ -93,17 +93,20 @@ sysctl --system
 # Step 7: Install container runtime (containerd)
 print_step "Step 7: Installing containerd..."
 
-# Install dnf-plugins-core for repository management
-print_status "Installing dnf-plugins-core..."
-dnf install -y dnf-plugins-core
+# Install containerd directly from Fedora repositories
+print_status "Installing containerd from Fedora repositories..."
+dnf install -y containerd
 
-# Add Docker repository
-print_status "Adding Docker repository..."
-dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-
-# Install containerd
-print_status "Installing containerd.io..."
-dnf install -y containerd.io
+# If containerd is not available, try alternative packages
+if ! command -v containerd &> /dev/null; then
+    print_status "Trying alternative containerd packages..."
+    dnf install -y moby-engine containerd.io || {
+        print_status "Installing containerd from Docker CE repository..."
+        dnf install -y dnf-plugins-core
+        dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+        dnf install -y containerd.io
+    }
+fi
 
 # Configure containerd
 print_status "Configuring containerd..."
