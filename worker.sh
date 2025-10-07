@@ -90,35 +90,27 @@ EOF
 
 sysctl --system
 
-# Step 7: Install container runtime (containerd)
-print_step "Step 7: Installing containerd..."
+# Step 7: Install container runtime (Docker)
+print_step "Step 7: Installing Docker..."
 
-# Install containerd directly from Fedora repositories
-print_status "Installing containerd from Fedora repositories..."
-dnf install -y containerd
+# Install Docker directly from Fedora repositories
+print_status "Installing Docker from Fedora repositories..."
+dnf install -y docker
 
-# If containerd is not available, try alternative packages
-if ! command -v containerd &> /dev/null; then
-    print_status "Trying alternative containerd packages..."
-    dnf install -y moby-engine containerd.io || {
-        print_status "Installing containerd from Docker CE repository..."
-        dnf install -y dnf-plugins-core
-        dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
-        dnf install -y containerd.io
-    }
+# Start and enable Docker service
+print_status "Starting and enabling Docker service..."
+systemctl start docker
+systemctl enable docker
+
+# Add current user to docker group (if not root)
+if [ ! -z "$SUDO_USER" ]; then
+    usermod -aG docker $SUDO_USER
+    print_status "Added $SUDO_USER to docker group"
 fi
 
-# Configure containerd
-print_status "Configuring containerd..."
-mkdir -p /etc/containerd
-containerd config default | tee /etc/containerd/config.toml
-
-# Enable SystemdCgroup
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
-
-systemctl restart containerd
-systemctl enable containerd
-systemctl status containerd --no-pager
+# Verify Docker installation
+print_status "Verifying Docker installation..."
+docker --version
 
 # Step 8: Install Kubernetes components
 print_step "Step 8: Installing Kubernetes components..."
