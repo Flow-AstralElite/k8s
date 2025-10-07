@@ -165,76 +165,148 @@ if [ -f /etc/kubernetes/admin.conf ] || [ -f /etc/kubernetes/manifests/kube-apis
     echo "3. Exit script"
     echo ""
     
-    while true; do
-        read -p "Please choose an option (1/2/3): " CHOICE
-        case $CHOICE in
-            1)
-                print_warning "WARNING: This will completely reset your Kubernetes cluster!"
-                read -p "Are you absolutely sure? Type 'YES' to confirm: " CONFIRM
-                if [ "$CONFIRM" = "YES" ]; then
-                    print_status "Resetting existing Kubernetes cluster..."
+    # Check if we can read input, if not default to option 2
+    if [ -t 0 ]; then
+        # Interactive terminal
+        ATTEMPT=0
+        while [ $ATTEMPT -lt 5 ]; do
+            echo -n "Please choose an option (1/2/3): "
+            read CHOICE 2>/dev/null || CHOICE=""
+            
+            # If read fails or empty, default to option 2 after 3 attempts
+            if [ -z "$CHOICE" ]; then
+                ATTEMPT=$((ATTEMPT + 1))
+                echo "[WARNING] No input received (attempt $ATTEMPT/5)"
+                if [ $ATTEMPT -ge 3 ]; then
+                    echo "[INFO] Defaulting to option 2 (use existing cluster)"
+                    CHOICE="2"
+                fi
+                sleep 1
+            fi
+            
+            case $CHOICE in
+                1)
+                    print_warning "WARNING: This will completely reset your Kubernetes cluster!"
+                    echo -n "Are you absolutely sure? Type 'YES' to confirm: "
+                    read CONFIRM 2>/dev/null || CONFIRM=""
+                    if [ "$CONFIRM" = "YES" ]; then
+                        print_status "Resetting existing Kubernetes cluster..."
+                        
+                        # Stop services first
+                        systemctl stop kubelet
+                        
+                        # Reset kubeadm
+                        kubeadm reset -f
+                        
+                        # Clean up additional files
+                        rm -rf /etc/cni/net.d
+                        rm -rf /etc/kubernetes
+                        rm -rf /var/lib/etcd
+                        rm -rf $HOME/.kube
+                        if [ ! -z "$SUDO_USER" ]; then
+                            rm -rf /home/$SUDO_USER/.kube
+                        fi
+                        
+                        # Reset iptables
+                        iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+                        
+                        # Restart services
+                        systemctl restart docker
+                        systemctl start kubelet
+                        
+                        print_status "Cluster reset completed. Proceeding with fresh initialization..."
+                        sleep 5
+                        break
+                    else
+                        print_error "Reset cancelled. Please choose another option."
+                        continue
+                    fi
+                    ;;
+                2)
+                    print_status "Using existing cluster. Skipping initialization..."
                     
-                    # Stop services first
-                    systemctl stop kubelet
-                    
-                    # Reset kubeadm
-                    kubeadm reset -f
-                    
-                    # Clean up additional files
-                    rm -rf /etc/cni/net.d
-                    rm -rf /etc/kubernetes
-                    rm -rf /var/lib/etcd
-                    rm -rf $HOME/.kube
-                    if [ ! -z "$SUDO_USER" ]; then
-                        rm -rf /home/$SUDO_USER/.kube
+                    # Set up kubeconfig if not already done
+                    if [ ! -f $HOME/.kube/config ]; then
+                        mkdir -p $HOME/.kube
+                        cp /etc/kubernetes/admin.conf $HOME/.kube/config
+                        chown $(id -u):$(id -g) $HOME/.kube/config
                     fi
                     
-                    # Reset iptables
-                    iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+                    # Set IP_ADDR for later use
+                    IP_ADDR=$(hostname -I | awk '{print $1}')
                     
-                    # Restart services
-                    systemctl restart docker
-                    systemctl start kubelet
+                    # Check existing cluster status
+                    print_status "Current cluster status:"
+                    kubectl get nodes
+                    echo ""
                     
-                    print_status "Cluster reset completed. Proceeding with fresh initialization..."
-                    sleep 5
+                    # Jump to network plugin installation
+                    jump_to_network_install=true
                     break
-                else
-                    print_error "Reset cancelled. Please choose another option."
+                    ;;
+                3)
+                    print_status "Exiting script..."
+                    exit 0
+                    ;;
+                "")
+                    # Empty input, continue loop
                     continue
-                fi
-                ;;
-            2)
-                print_status "Using existing cluster. Skipping initialization..."
-                
-                # Set up kubeconfig if not already done
-                if [ ! -f $HOME/.kube/config ]; then
-                    mkdir -p $HOME/.kube
-                    cp /etc/kubernetes/admin.conf $HOME/.kube/config
-                    chown $(id -u):$(id -g) $HOME/.kube/config
-                fi
-                
-                # Set IP_ADDR for later use
-                IP_ADDR=$(hostname -I | awk '{print $1}')
-                
-                # Check existing cluster status
-                print_status "Current cluster status:"
-                kubectl get nodes
-                echo ""
-                
-                # Jump to network plugin installation
-                jump_to_network_install=true
-                break
-                ;;
-            3)
-                print_status "Exiting script..."
-                exit 0
-                ;;
-            *)
-                print_error "Invalid option. Please choose 1, 2, or 3."
-                ;;
-        esac
-    done
+                    ;;
+                *)
+                    print_error "Invalid option '$CHOICE'. Please choose 1, 2, or 3."
+                    ;;
+            esac
+        done
+        
+        # If we exit the loop without a valid choice, default to option 2
+        if [ $ATTEMPT -ge 5 ]; then
+            print_warning "Too many failed attempts. Defaulting to option 2 (use existing cluster)"
+            CHOICE="2"
+            
+            print_status "Using existing cluster. Skipping initialization..."
+            
+            # Set up kubeconfig if not already done
+            if [ ! -f $HOME/.kube/config ]; then
+                mkdir -p $HOME/.kube
+                cp /etc/kubernetes/admin.conf $HOME/.kube/config
+                chown $(id -u):$(id -g) $HOME/.kube/config
+            fi
+            
+            # Set IP_ADDR for later use
+            IP_ADDR=$(hostname -I | awk '{print $1}')
+            
+            # Check existing cluster status
+            print_status "Current cluster status:"
+            kubectl get nodes
+            echo ""
+            
+            # Jump to network plugin installation
+            jump_to_network_install=true
+        fi
+    else
+        # Non-interactive, default to option 2
+        print_warning "Non-interactive mode detected. Defaulting to option 2 (use existing cluster)"
+        
+        print_status "Using existing cluster. Skipping initialization..."
+        
+        # Set up kubeconfig if not already done
+        if [ ! -f $HOME/.kube/config ]; then
+            mkdir -p $HOME/.kube
+            cp /etc/kubernetes/admin.conf $HOME/.kube/config
+            chown $(id -u):$(id -g) $HOME/.kube/config
+        fi
+        
+        # Set IP_ADDR for later use
+        IP_ADDR=$(hostname -I | awk '{print $1}')
+        
+        # Check existing cluster status
+        print_status "Current cluster status:"
+        kubectl get nodes
+        echo ""
+        
+        # Jump to network plugin installation
+        jump_to_network_install=true
+    fi
 else
     print_status "No existing Kubernetes installation detected. Proceeding with fresh installation..."
 fi
