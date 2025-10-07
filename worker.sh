@@ -92,7 +92,17 @@ sysctl --system
 
 # Step 7: Install container runtime (containerd)
 print_step "Step 7: Installing containerd..."
+
+# Install dnf-plugins-core for repository management
+print_status "Installing dnf-plugins-core..."
+dnf install -y dnf-plugins-core
+
+# Add Docker repository
+print_status "Adding Docker repository..."
 dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+
+# Install containerd
+print_status "Installing containerd.io..."
 dnf install -y containerd.io
 
 # Configure containerd
