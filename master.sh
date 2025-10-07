@@ -137,32 +137,93 @@ systemctl enable kubelet
 # Step 9: Initialize Kubernetes cluster
 print_step "Step 9: Initializing Kubernetes master node..."
 
-# Get the IP address of the main network interface
-IP_ADDR=$(hostname -I | awk '{print $1}')
+# Check if cluster is already initialized
+if [ -f /etc/kubernetes/admin.conf ]; then
+    print_warning "Kubernetes cluster appears to be already initialized!"
+    echo ""
+    read -p "Do you want to reset and reinitialize the cluster? (y/n): " RESET_CLUSTER
+    
+    if [ "$RESET_CLUSTER" = "y" ] || [ "$RESET_CLUSTER" = "Y" ]; then
+        print_status "Resetting existing Kubernetes cluster..."
+        kubeadm reset -f
+        
+        # Clean up additional files
+        rm -rf /etc/cni/net.d
+        rm -rf /etc/kubernetes
+        rm -rf /var/lib/etcd
+        rm -rf $HOME/.kube
+        
+        # Reset iptables
+        iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+        
+        # Restart services
+        systemctl restart kubelet
+        systemctl restart docker
+        
+        print_status "Cluster reset completed. Proceeding with fresh initialization..."
+        sleep 5
+    else
+        print_status "Skipping cluster initialization. Using existing cluster."
+        
+        # Set up kubeconfig if not already done
+        if [ ! -f $HOME/.kube/config ]; then
+            mkdir -p $HOME/.kube
+            cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+            chown $(id -u):$(id -g) $HOME/.kube/config
+        fi
+        
+        # Skip to network plugin installation
+        print_status "Checking existing cluster status..."
+        kubectl get nodes
+        echo ""
+        
+        # Jump to network plugin installation
+        jump_to_network_install=true
+    fi
+fi
 
-print_status "Using IP address: $IP_ADDR"
-print_status "Initializing cluster... This may take a few minutes..."
-
-# Initialize cluster
-kubeadm init \
-    --pod-network-cidr=10.244.0.0/16 \
-    --apiserver-advertise-address=$IP_ADDR \
-    --control-plane-endpoint=$IP_ADDR | tee /root/kubeadm-init.log
+# Initialize cluster only if not skipping
+if [ "$jump_to_network_install" != "true" ]; then
+    # Get the IP address of the main network interface
+    IP_ADDR=$(hostname -I | awk '{print $1}')
+    
+    print_status "Using IP address: $IP_ADDR"
+    print_status "Initializing cluster... This may take a few minutes..."
+    
+    # Initialize cluster
+    kubeadm init \
+        --pod-network-cidr=10.244.0.0/16 \
+        --apiserver-advertise-address=$IP_ADDR \
+        --control-plane-endpoint=$IP_ADDR | tee /root/kubeadm-init.log
+fi
 
 # Step 10: Set up kubeconfig
 print_step "Step 10: Setting up kubeconfig..."
 
-# Set up kubeconfig for root user
-mkdir -p $HOME/.kube
-cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-chown $(id -u):$(id -g) $HOME/.kube/config
-
-# Set up kubeconfig for regular users (if any)
-if [ ! -z "$SUDO_USER" ]; then
-    mkdir -p /home/$SUDO_USER/.kube
-    cp -i /etc/kubernetes/admin.conf /home/$SUDO_USER/.kube/config
-    chown -R $SUDO_USER:$SUDO_USER /home/$SUDO_USER/.kube
-    print_status "Kubeconfig also configured for user: $SUDO_USER"
+# Only setup kubeconfig if not already done or if we just initialized
+if [ "$jump_to_network_install" != "true" ] || [ ! -f $HOME/.kube/config ]; then
+    # Set up kubeconfig for root user
+    mkdir -p $HOME/.kube
+    if [ -f $HOME/.kube/config ]; then
+        print_status "Backing up existing kubeconfig..."
+        cp $HOME/.kube/config $HOME/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
+    fi
+    cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
+    chown $(id -u):$(id -g) $HOME/.kube/config
+    
+    # Set up kubeconfig for regular users (if any)
+    if [ ! -z "$SUDO_USER" ]; then
+        mkdir -p /home/$SUDO_USER/.kube
+        if [ -f /home/$SUDO_USER/.kube/config ]; then
+            print_status "Backing up existing kubeconfig for $SUDO_USER..."
+            cp /home/$SUDO_USER/.kube/config /home/$SUDO_USER/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
+        fi
+        cp -f /etc/kubernetes/admin.conf /home/$SUDO_USER/.kube/config
+        chown -R $SUDO_USER:$SUDO_USER /home/$SUDO_USER/.kube
+        print_status "Kubeconfig also configured for user: $SUDO_USER"
+    fi
+else
+    print_status "Using existing kubeconfig configuration"
 fi
 
 # Add kubectl completion for bash
