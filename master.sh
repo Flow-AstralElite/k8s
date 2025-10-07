@@ -170,10 +170,57 @@ kubectl completion bash > /etc/bash_completion.d/kubectl
 
 # Step 11: Install network plugin
 print_step "Step 11: Installing Calico network plugin..."
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+
+# Wait for API server to be ready
+print_status "Waiting for API server to be ready..."
+sleep 30
+
+# Test API server connectivity
+print_status "Testing API server connectivity..."
+for i in {1..10}; do
+    if kubectl get nodes &>/dev/null; then
+        print_status "API server is ready!"
+        break
+    else
+        print_status "API server not ready yet, waiting... (attempt $i/10)"
+        sleep 10
+    fi
+done
+
+# Install Calico with retry logic
+print_status "Installing Calico network plugin..."
+for i in {1..3}; do
+    if kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml; then
+        print_status "Calico installed successfully!"
+        break
+    else
+        print_warning "Calico installation failed (attempt $i/3), retrying in 15 seconds..."
+        sleep 15
+    fi
+done
 
 print_status "Waiting for Calico pods to start..."
-sleep 10
+sleep 15
+
+# Check if we're using Docker instead of containerd and restart kubelet if needed
+print_status "Ensuring kubelet is properly configured for Docker..."
+if systemctl is-active --quiet docker; then
+    # Create kubelet drop-in directory
+    mkdir -p /etc/systemd/system/kubelet.service.d
+    
+    # Create drop-in file for Docker
+    cat > /etc/systemd/system/kubelet.service.d/20-docker.conf <<EOF
+[Service]
+Environment="KUBELET_EXTRA_ARGS=--container-runtime-endpoint=unix:///var/run/dockershim.sock"
+EOF
+    
+    # Reload and restart kubelet
+    systemctl daemon-reload
+    systemctl restart kubelet
+    
+    print_status "Kubelet restarted with Docker configuration"
+    sleep 10
+fi
 
 # Step 12: Generate join command
 print_step "Step 12: Generating join command for worker nodes..."
