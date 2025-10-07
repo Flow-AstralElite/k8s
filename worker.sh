@@ -127,7 +127,7 @@ exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
 EOF
 
 # Install Kubernetes packages
-dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+dnf install -y kubelet kubeadm kubectl --setopt=exclude=
 
 systemctl enable kubelet
 
